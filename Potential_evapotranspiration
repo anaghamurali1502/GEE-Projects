@@ -1,0 +1,90 @@
+// defining start and end dates
+var start_date = ee.Date('2012-02-01')
+var end_date = ee.Date('2022-12-31')
+
+// var data = chirps_data.filterDate(start_date,end_date).filterBounds(roi).first().clip(roi)
+
+// Map.addLayer(data,{},'Map')
+
+var step = 1
+var data_new = chirps_data.filterDate(start_date,end_date).filterBounds(roi)
+print('chirps data:',data_new)
+var count = (end_date.difference(start_date,'month')).divide(step)
+print(count)
+
+var count_list = ee.List.sequence(0,count)
+print(count_list)
+
+// function
+var month = function(value){
+                var initial_val = 0
+                var delta = ee.Number.parse(value).multiply(step)
+                var month_val = start_date.advance(delta,'month')
+                return month_val
+}
+
+// obtaining the dates of each month 
+var dates_list = count_list.map(month)
+print(dates_list)
+
+var sort_images = function(date){
+      var start = ee.Date(date)
+      var end = ee.Date(date).advance(step,'month')
+      var chirps_filtered = chirps_data.filterDate(start,end)
+      var chirps_clipped = chirps_filtered.map(function(img){
+                                            var clipped = img.clip(roi)
+                                            return clipped})
+      var img_count = chirps_clipped.size()
+    
+      var chirps_start_date = ee.Date(chirps_filtered.first().get('system:time_start'))
+      var chirps_end_date = ee.Date(chirps_filtered.limit(1,'system:time_end', false).first().get('system:time_end'))
+      var chirps_sum = chirps_clipped.sum().set({
+                      'Start_Date': chirps_start_date,
+                      'End_Date': chirps_end_date,
+                      'no_of_images': img_count,
+                      'system:time_start': chirps_filtered.first().get('system:time_start'),
+                      'system:time_end' : chirps_filtered.limit(1,'system:time_end', false).first().get('system:time_end')
+      })
+      
+      var time = chirps_end_date.difference(chirps_start_date,'month').round()
+      
+      // return ee.Algorithms.If(
+      //   time.gte(step),chirps_sum)
+      return chirps_sum
+      
+}
+// calculating sum
+var rain_sum = ee.ImageCollection.fromImages(dates_list.map(sort_images))
+print('rain_sum',rain_sum)
+
+var rain_sum_collectio = ee.ImageCollection(rain_sum.copyProperties(chirps_data))
+var rain_sum_collection= rain_sum_collectio.select(['pet'])
+
+// var etdi=function(img){
+//     var ETDI=img.expression('((PET-ET)/(PET))',
+//       {'PET':img.select('PET'),'ET':img.select('ET')
+//     }).rename('ETDI');
+//     return img.addBands(ETDI.clip(roi));
+// };
+var etdi=function(img){
+    var ETDI=img.expression('0.1 * PET',
+      {'PET':img.select('pet')//,'ET':img.select('ET')
+    }).rename('ETDI');
+    return img.addBands(ETDI.clip(roi));
+};
+var spi_col=rain_sum_collection.map(etdi)
+var spi_coll=spi_col.select('ETDI')
+print('spi_coll', spi_coll)
+Map.addLayer(spi_coll,{},'spi_coll')
+var stacked_Bands=spi_coll.toBands().float()
+
+Export.image.toDrive({
+          image: stacked_Bands,
+          description:'PET_SSEBop_1month_5km_1month',
+          folder: 'Terraclimate',
+          region: geometry,
+          scale:5550,
+          crs: 'EPSG:4326',
+          fileFormat: 'GeoTIFF',
+          maxPixels: 1e13
+});
