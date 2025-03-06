@@ -1,0 +1,107 @@
+
+var showInteractiveChart = true
+// var roi = table2.filter(ee.Filter.eq('STATE', 'ANDHRA PRADESH'))
+// Map.centerObject(roi,7)
+// Map.addLayer(roi,{},'roi')
+
+// defining start and end dates
+var start_date = ee.Date('2000-01-01')
+var end_date = ee.Date('2004-12-31')
+
+// monthly, 3 months, 6 months
+var step = 1
+
+var count = (end_date.difference(start_date,'month')).divide(step)
+print(count)
+
+var count_list = ee.List.sequence(0,count)
+print(count_list)
+
+// function
+var month = function(value){
+                var initial_val = 0
+                var delta = ee.Number.parse(value).multiply(step)
+                var month_val = start_date.advance(delta,'month')
+                return month_val
+}
+
+// obtaining the dates of each month 
+var dates_list = count_list.map(month)
+print(dates_list)
+
+var sort_images = function(date){
+      var start = ee.Date(date)
+      var end = ee.Date(date).advance(step,'month')
+      var chirps_filtered = chirps_data.filterDate(start,end)
+      var chirps_clipped = chirps_filtered.map(function(img){
+                                            var clipped = img.clip(roi)
+                                            return clipped})
+      var img_count = chirps_clipped.size()
+    
+      var chirps_start_date = ee.Date(chirps_filtered.first().get('system:time_start'))
+      var chirps_end_date = ee.Date(chirps_filtered.limit(1,'system:time_end', false).first().get('system:time_end'))
+      var chirps_sum = chirps_clipped.sum().set({
+                      'Start_Date': chirps_start_date,
+                      'End_Date': chirps_end_date,
+                      'no_of_images': img_count,
+                      'system:time_start': chirps_filtered.first().get('system:time_start'),
+                      'system:time_end' : chirps_filtered.limit(1,'system:time_end', false).first().get('system:time_end')
+      })
+      
+      var time = chirps_end_date.difference(chirps_start_date,'month').round()
+      
+      // return ee.Algorithms.If(
+      //   time.gte(step),chirps_sum)
+      return chirps_sum
+      
+}
+// calculating sum
+var rain_sum = ee.ImageCollection.fromImages(dates_list.map(sort_images))
+print('rain_sum',rain_sum)
+
+var rain_sum_collection = ee.ImageCollection(rain_sum.copyProperties(chirps_data))
+print('rain_sum_collection', rain_sum_collection)
+
+var s = rain_sum_collection.first()
+
+var s_nan = ee.Algorithms.If(s.lt(0),NaN,s)
+print('S_nan',s_nan)
+// // spi
+// var SPI = function(img_1){
+//   var count_1 = img_1.length
+  
+// }
+var spi = rain_sum_collection.first().length
+print('count',spi)
+
+var mean_stddev = function(img){
+    var starting_date = ee.Date(img.get('system:time_start')).getRelative('day','year')
+    var ending_date = ee.Date(img.get('system:time_end')).getRelative('day','year')
+    var img_collection = rain_sum_collection.filter(ee.Filter.calendarRange(starting_date,ending_date,'day_of_year'))
+    var std_mean = img_collection.reduce(ee.Reducer.stdDev().combine(ee.Reducer.mean(), null, true))
+    return img.addBands(std_mean)
+    }
+var rain_sum_mean_std = rain_sum_collection.map(mean_stddev)
+print('rain_sum_mean_std',rain_sum_mean_std)
+var spi=function(img){
+    var SPI=img.expression('((precipitation-precipitation_mean)/(precipitation_stdDev))',
+      {'precipitation':img.select('precipitation'),'precipitation_mean':img.select('precipitation_mean'),'precipitation_stdDev':img.select('precipitation_stdDev')
+    }).rename('SPI');
+    return img.addBands(SPI.clip(roi));
+};
+var spi_col=rain_sum_mean_std.map(spi)
+var spi_coll=spi_col.select('SPI')
+print('spi_coll', spi_coll)
+Map.addLayer(spi_coll,{},'spi_coll')
+var stacked_Bands=spi_coll.toBands().float()
+
+Export.image.toDrive({
+          image: stacked_Bands,
+          description:'SPI',
+          folder: 'Anagha',
+          region: geometry,
+          scale:5550,
+          crs: 'EPSG:4326',
+          fileFormat: 'GeoTIFF',
+          maxPixels: 1e13
+});
