@@ -1,0 +1,78 @@
+// Import the Lower Mekong boundary. 
+var roi = ee.FeatureCollection('projects/anaghamurali/assets/Climate_zone_1').filterMetadata('Zone', "equals",'Composite'); 
+// Center the map. 
+Map.centerObject(roi, 5); 
+// Add the Lower Mekong Basin boundary to the map. 
+Map.addLayer(roi, {}, 'roi'); 
+// Define study period.
+var startYear = 2001;
+var endYear = 2022;
+var startMonth = 1;
+var endMonth = 12;
+
+var startDate = ee.Date.fromYMD(startYear, startMonth, 1);
+var endDate = ee.Date.fromYMD(endYear, endMonth, 31);
+var years = ee.List.sequence(startYear, endYear);
+var months = ee.List.sequence(1, 12);
+
+var modi=ee.ImageCollection("MODIS/061/MOD11A1");
+
+var startDate = ee.Date.fromYMD(startYear,1,1)
+var endDate = ee.Date.fromYMD(endYear, 12, 31)
+var filtered =modi.filter(ee.Filter.date(startDate, endDate))
+
+
+var latLSTday = filtered.select('LST_Night_1km');
+
+
+var lanlstday = latLSTday.map(function(img) {
+  return img.multiply(0.02)
+    .copyProperties(img, ['system:index','system:time_start']);
+});
+
+
+// Introducting calendarRange()
+var monthImages = lanlstday
+  .filter(ee.Filter.calendarRange(1,12, 'month'))
+print(monthImages)
+
+
+
+// Create NDVI composite for every month
+var year = ee.List.sequence(startYear,endYear);
+var month = ee.List.sequence(1, 12);
+
+// Map over the years and create a monthly average collection
+var monthlyImage = years.map(function(year) {
+  return months.map(function(month) {
+    month=ee.Number(month).toInt()
+    year=ee.Number(year).toInt()
+    var filtered = monthImages
+      .filter(ee.Filter.calendarRange(year, year, 'year'))
+      .filter(ee.Filter.calendarRange(month, month, 'month'))
+    var monthly = filtered.median()
+    return monthly.set('system:time_start',ee.Date(ee.String('').cat(year).cat(ee.String('-')).cat(month ).cat(ee.String('-')).cat(ee.String('01'))))
+                  .set('month',month)
+                  .set('year',year)
+  })
+}).flatten()
+
+
+// We now have 1 image per month for entire duratioon
+print(monthlyImage)
+
+var newcoll = ee.ImageCollection(ee.List(monthlyImage));
+print(newcoll) 
+
+var chart2 = ui.Chart.image.series({
+  imageCollection:newcoll,
+  region: roi,
+  reducer: ee.Reducer.mean(),
+  scale: 5000,
+  xProperty:'system:time_start'})
+  .setOptions({
+    title: 'Temp',
+    vAxis: {title: 'Temp'},
+    hAxis:{title:'time',format:'YYYY-MM'}
+  });
+print(chart2);
